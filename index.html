@@ -3,143 +3,179 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>EM Vision PRO MAX</title>
+<title>Magnet AR</title>
 
 <style>
-body{margin:0;background:black;font-family:Arial;color:white;overflow:hidden}
-video{position:absolute;width:100%;height:100%;object-fit:cover}
-canvas{position:absolute;top:0;left:0}
-#hud{position:absolute;bottom:20px;width:100%;text-align:center}
-#gauge{width:220px;height:220px;border:3px solid white;border-radius:50%;margin:auto;position:relative}
-#needle{width:4px;height:100px;background:white;position:absolute;left:50%;bottom:50%;transform-origin:bottom}
-#status{margin-top:10px;font-size:20px}
-button{
-position:absolute;top:50%;left:50%;
-transform:translate(-50%,-50%);
-padding:20px 40px;font-size:22px;
-background:black;color:white;border:2px solid white;border-radius:10px;
+body{
+  margin:0;
+  overflow:hidden;
+  background:black;
+  font-family:Arial,Helvetica,sans-serif;
+}
+
+video{
+  position:fixed;
+  width:100vw;
+  height:100vh;
+  object-fit:cover;
+  z-index:0;
+}
+
+canvas{
+  position:fixed;
+  width:100vw;
+  height:100vh;
+  z-index:1;
+}
+
+#ui{
+  position:fixed;
+  top:10px;
+  left:10px;
+  color:#00ffea;
+  z-index:2;
+  background:rgba(0,0,0,.45);
+  padding:10px;
+  border-radius:10px;
+  backdrop-filter: blur(6px);
+}
+
+.big{
+  font-size:22px;
+  font-weight:bold;
+}
+
+.small{
+  font-size:12px;
+  opacity:.8;
 }
 </style>
 </head>
 
 <body>
 
-<video id="video" autoplay playsinline muted></video>
+<video id="cam" autoplay playsinline></video>
 <canvas id="canvas"></canvas>
 
-<button id="startBtn">DÉMARRER SCAN</button>
-
-<div id="hud">
-<div id="gauge"><div id="needle"></div></div>
-<div id="status">Initialisation…</div>
+<div id="ui">
+  <div class="big">Champ magnétique : <span id="power">0</span> µT</div>
+  <div>X : <span id="x">0</span></div>
+  <div>Y : <span id="y">0</span></div>
+  <div>Z : <span id="z">0</span></div>
+  <div class="small">
+  Z = derrière / écran<br>
+  X = gauche / droite<br>
+  Y = haut / bas
+  </div>
 </div>
 
 <script>
-const video=document.getElementById("video");
+// CAMERA
+navigator.mediaDevices.getUserMedia({
+  video:{ facingMode:"environment" }
+}).then(stream=>{
+  document.getElementById("cam").srcObject=stream;
+});
+
+// CANVAS
 const canvas=document.getElementById("canvas");
 const ctx=canvas.getContext("2d");
-canvas.width=innerWidth;canvas.height=innerHeight;
+canvas.width=innerWidth;
+canvas.height=innerHeight;
 
-const needle=document.getElementById("needle");
-const statusText=document.getElementById("status");
-const btn=document.getElementById("startBtn");
-
-///////////////////////
-// 📷 CAMERA SAMSUNG FIX
-///////////////////////
-async function startCamera(){
-try{
-let stream=await navigator.mediaDevices.getUserMedia({video:true,audio:false});
-video.srcObject=stream;
-await new Promise(r=>setTimeout(r,800));
-await video.play();
-}catch(e){
-statusText.innerText="Caméra non accessible";
-}
-}
-
-///////////////////////
-// 🧲 DETECTION MAGNETIQUE RÉELLE
-///////////////////////
-let samples=[];
-let noiseLevel=0;
-let detected=false;
-let angle=0;
-
-async function startSensor(){
-if(typeof DeviceOrientationEvent.requestPermission==="function"){
-await DeviceOrientationEvent.requestPermission();
-}
-
-window.addEventListener("deviceorientationabsolute",e=>{
-let strength=Math.sqrt(e.alpha**2+e.beta**2+e.gamma**2);
-
-// analyse bruit temporel
-samples.push(strength);
-if(samples.length>25) samples.shift();
-
-let avg=samples.reduce((a,b)=>a+b,0)/samples.length;
-noiseLevel=Math.sqrt(samples.map(v=>(v-avg)**2).reduce((a,b)=>a+b)/samples.length);
-
-detected=noiseLevel>1.5; // signature aimant
-
-angle=Math.atan2(e.gamma,e.beta);
-needle.style.transform="rotate("+angle+"rad)";
-});
-}
-
-///////////////////////
-// 🔊 AUDIO DOUX
-///////////////////////
-const audioCtx=new(window.AudioContext||window.webkitAudioContext)();
-const osc=audioCtx.createOscillator();
-const gain=audioCtx.createGain();
-osc.type="sine";
-osc.connect(gain);
-gain.connect(audioCtx.destination);
-osc.start();
-
-///////////////////////
-// ✨ PARTICULES PREMIUM
-///////////////////////
 let particles=[];
-for(let i=0;i<700;i++){
-particles.push({x:Math.random()*canvas.width,y:Math.random()*canvas.height});
+for(let i=0;i<200;i++){
+  particles.push({
+    x:Math.random()*canvas.width,
+    y:Math.random()*canvas.height,
+    vx:0,
+    vy:0
+  });
 }
 
-function draw(){
-ctx.fillStyle="rgba(0,0,0,0.2)";
-ctx.fillRect(0,0,canvas.width,canvas.height);
+let mag={x:0,y:0,z:0,strength:0};
 
-particles.forEach(p=>{
-p.x+=Math.cos(angle)*(detected?4:0.5);
-p.y+=Math.sin(angle)*(detected?4:0.5);
-
-if(p.x<0||p.x>canvas.width||p.y<0||p.y>canvas.height){
-p.x=Math.random()*canvas.width;
-p.y=Math.random()*canvas.height;
+// MAGNETOMETER
+if("Magnetometer" in window){
+  const sensor=new Magnetometer({frequency:30});
+  sensor.addEventListener("reading", ()=>{
+    mag.x=sensor.x;
+    mag.y=sensor.y;
+    mag.z=sensor.z;
+    mag.strength=Math.sqrt(mag.x**2+mag.y**2+mag.z**2);
+    updateUI();
+  });
+  sensor.start();
+}else{
+  alert("Magnétomètre non supporté 😢 (Android Chrome conseillé)");
 }
 
-ctx.fillStyle=detected?"rgba(0,180,255,0.9)":"rgba(255,255,255,0.25)";
-ctx.beginPath();ctx.arc(p.x,p.y,1.4,0,Math.PI*2);ctx.fill();
-});
-
-// son
-gain.gain.value=detected?0.25:0.02;
-osc.frequency.value=detected?220:120;
-
-statusText.innerText=detected?"🧲 Champ perturbé détecté":"Champ stable";
-
-requestAnimationFrame(draw);
+function updateUI(){
+  power.innerText=mag.strength.toFixed(1);
+  x.innerText=mag.x.toFixed(1);
+  y.innerText=mag.y.toFixed(1);
+  z.innerText=mag.z.toFixed(1);
 }
-draw();
 
-btn.onclick=async()=>{
-btn.style.display="none";
-await startSensor();
-await audioCtx.resume();
-await startCamera();
-};
+// DRAW RADAR
+function drawRadar(){
+  const cx=canvas.width/2;
+  const cy=canvas.height/2;
+
+  ctx.strokeStyle="rgba(0,255,200,.3)";
+  ctx.lineWidth=2;
+
+  for(let r=100;r<500;r+=100){
+    ctx.beginPath();
+    ctx.arc(cx,cy,r,0,Math.PI*2);
+    ctx.stroke();
+  }
+
+  // direction aimant (projection X/Y)
+  const angle=Math.atan2(mag.y,mag.x);
+  ctx.strokeStyle="rgba(0,255,255,.8)";
+  ctx.beginPath();
+  ctx.moveTo(cx,cy);
+  ctx.lineTo(cx+Math.cos(angle)*400, cy+Math.sin(angle)*400);
+  ctx.stroke();
+}
+
+// PARTICLES
+function updateParticles(){
+  const force = Math.min(mag.strength/80, 5);
+
+  particles.forEach(p=>{
+    const angle=Math.atan2(mag.y,mag.x);
+
+    p.vx += Math.cos(angle)*force*0.2;
+    p.vy += Math.sin(angle)*force*0.2;
+
+    p.vx*=0.95;
+    p.vy*=0.95;
+
+    p.x+=p.vx;
+    p.y+=p.vy;
+
+    if(p.x<0||p.x>canvas.width) p.vx*=-1;
+    if(p.y<0||p.y>canvas.height) p.vy*=-1;
+
+    const glow=Math.min(mag.strength*3,255);
+    ctx.fillStyle=`rgba(0,255,${glow},0.9)`;
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,2,0,Math.PI*2);
+    ctx.fill();
+  });
+}
+
+// LOOP
+function loop(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  drawRadar();
+  updateParticles();
+  requestAnimationFrame(loop);
+}
+loop();
 </script>
+
 </body>
 </html>
