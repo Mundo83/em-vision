@@ -8,6 +8,7 @@
 
 <body style="margin:0; overflow:hidden; background:black;">
 
+<!-- 🎥 CAMERA -->
 <video id="video" autoplay playsinline muted style="
 position:absolute;
 width:100%;
@@ -16,6 +17,7 @@ object-fit:cover;
 z-index:0;
 "></video>
 
+<!-- 🎨 CANVAS -->
 <canvas id="canvas" style="
 position:absolute;
 top:0;
@@ -23,10 +25,28 @@ left:0;
 z-index:1;
 "></canvas>
 
+<!-- 🔥 BOUTON -->
+<button id="startBtn" style="
+position:absolute;
+z-index:2;
+top:50%;
+left:50%;
+transform:translate(-50%,-50%);
+padding:20px 40px;
+font-size:20px;
+background:black;
+color:white;
+border:2px solid white;
+border-radius:10px;
+">
+DÉMARRER
+</button>
+
 <script>
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
+const btn = document.getElementById("startBtn");
 
 // resize
 function resize(){
@@ -36,56 +56,43 @@ function resize(){
 resize();
 window.addEventListener("resize", resize);
 
-// 🎥 CAMERA FIX
+// champ
+let field = {x:0,y:0,z:0};
+
+// caméra
 async function startCamera(){
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "environment" },
-      audio: false
+      video: { facingMode: "environment" }
     });
-
     video.srcObject = stream;
-
-    // 🔥 IMPORTANT (corrige ton bug)
     await video.play();
-
-  } catch(err){
-    console.error(err);
-    alert("Erreur caméra : HTTPS obligatoire ou permission refusée");
+  } catch(e){
+    alert("Caméra bloquée !");
+    console.log(e);
   }
 }
 
-// 📱 CAPTEUR MAGNÉTIQUE (si dispo)
-let field = {x:0,y:0,z:0};
-
-function startMagnetometer(){
-
-  if ("Magnetometer" in window) {
-    try {
-      const sensor = new Magnetometer({frequency: 30});
-
-      sensor.addEventListener("reading", () => {
+// capteur OU simulation
+function startField(){
+  if ("Magnetometer" in window){
+    try{
+      const sensor = new Magnetometer({frequency:30});
+      sensor.addEventListener("reading", ()=>{
         field.x = sensor.x;
         field.y = sensor.y;
         field.z = sensor.z;
       });
-
       sensor.start();
-      console.log("Magnetometer actif");
-
-    } catch(err){
-      console.log("Capteur bloqué:", err);
-      startFakeField();
+    }catch{
+      fake();
     }
-
   } else {
-    console.log("Pas de capteur → simulation");
-    startFakeField();
+    fake();
   }
 }
 
-// 🧲 fallback simulation
-function startFakeField(){
+function fake(){
   setInterval(()=>{
     let t = Date.now()*0.001;
     field.x = Math.sin(t);
@@ -94,7 +101,7 @@ function startFakeField(){
   },50);
 }
 
-// 🎧 AUDIO
+// AUDIO
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 const osc = audioCtx.createOscillator();
 const gain = audioCtx.createGain();
@@ -102,26 +109,19 @@ const gain = audioCtx.createGain();
 osc.connect(gain);
 gain.connect(audioCtx.destination);
 osc.start();
+gain.gain.value = 0;
 
-document.body.addEventListener("click", async ()=>{
-  await audioCtx.resume();
-  startCamera();
-  startMagnetometer();
-});
-
-// ✨ particules
+// particules
 let particles = [];
-
-for(let i=0;i<1000;i++){
+for(let i=0;i<800;i++){
   particles.push({
     x: Math.random()*window.innerWidth,
     y: Math.random()*window.innerHeight,
-    vx:0,
-    vy:0
+    vx:0, vy:0
   });
 }
 
-// 🎨 rendu
+// rendu
 function draw(){
 
   ctx.fillStyle = "rgba(0,0,0,0.1)";
@@ -134,15 +134,14 @@ function draw(){
   osc.frequency.value = 100 + strength*10;
 
   particles.forEach(p=>{
-
     let dx = p.x - canvas.width/2;
     let dy = p.y - canvas.height/2;
     let dist = Math.sqrt(dx*dx+dy*dy)+1;
 
-    let force = 100 / dist;
+    let force = 80/dist;
 
-    p.vx += Math.cos(angle) * force * 0.01;
-    p.vy += Math.sin(angle) * force * 0.01;
+    p.vx += Math.cos(angle)*force*0.02;
+    p.vy += Math.sin(angle)*force*0.02;
 
     p.x += p.vx;
     p.y += p.vy;
@@ -156,16 +155,21 @@ function draw(){
       p.vx=0; p.vy=0;
     }
 
-    let color = Math.min(255, strength*5);
-
-    ctx.fillStyle = `rgba(${color},255,200,0.7)`;
+    ctx.fillStyle = "rgba(0,255,200,0.7)";
     ctx.fillRect(p.x,p.y,2,2);
   });
 
   requestAnimationFrame(draw);
 }
-
 draw();
+
+// bouton = clé magique
+btn.addEventListener("click", async ()=>{
+  btn.style.display = "none";
+  await audioCtx.resume();
+  await startCamera();
+  startField();
+});
 </script>
 
 </body>
