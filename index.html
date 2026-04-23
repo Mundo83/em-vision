@@ -13,15 +13,13 @@ position:absolute;
 width:100%;
 height:100%;
 object-fit:cover;
-z-index:0;
-"></video>
+z-index:0;"></video>
 
 <canvas id="canvas" style="
 position:absolute;
 top:0;
 left:0;
-z-index:1;
-"></canvas>
+z-index:1;"></canvas>
 
 <button id="startBtn" style="
 position:absolute;
@@ -55,30 +53,28 @@ window.addEventListener("resize", resize);
 let field = {x:0,y:0,z:0};
 let strength = 0;
 
-// 🎥 CAMERA (back auto)
+// 🎥 CAMERA ARRIÈRE (FIX MOBILE)
 async function startCamera(){
   try {
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const cams = devices.filter(d => d.kind === "videoinput");
-
-    let back = cams.find(d =>
-      d.label.toLowerCase().includes("back") ||
-      d.label.toLowerCase().includes("rear")
-    );
-
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: back ? {deviceId:{exact:back.deviceId}} : true
+      video:{
+        facingMode:{ ideal:"environment" },
+        width:{ ideal:1920 },
+        height:{ ideal:1080 }
+      },
+      audio:false
     });
 
     video.srcObject = stream;
     await video.play();
-  } catch(e){
-    console.log(e);
-    alert("caméra bloquée");
+
+  } catch(err){
+    alert("Autorise la caméra puis recharge la page !");
+    console.error(err);
   }
 }
 
-// 🧲 MAGNETO
+// 🧲 MAGNETOMÈTRE
 function startMagnet(){
   if ("Magnetometer" in window){
     try{
@@ -97,7 +93,7 @@ function startMagnet(){
   }
 }
 
-// fallback
+// fallback si capteur indisponible
 function fakeField(){
   setInterval(()=>{
     let t = Date.now()*0.001;
@@ -120,9 +116,8 @@ gain.connect(audioCtx.destination);
 osc.start();
 gain.gain.value = 0;
 
-// ✨ PARTICLES
+// ✨ PARTICULES
 let particles = [];
-
 for(let i=0;i<1200;i++){
   particles.push({
     x: Math.random()*window.innerWidth,
@@ -131,40 +126,27 @@ for(let i=0;i<1200;i++){
   });
 }
 
-// 🎨 COLOR MODES
+// 🎨 COULEURS CHAMP
 function getColor(strength){
-
-  // 🔴 métal détecté (fort champ)
-  if(strength > 80){
-    return "rgba(255,50,50,0.9)";
-  }
-
-  // 🟢 champ moyen
-  if(strength > 40){
-    return "rgba(50,255,100,0.8)";
-  }
-
-  // 🔵 faible champ
+  if(strength > 80) return "rgba(255,50,50,0.9)";
+  if(strength > 40) return "rgba(50,255,100,0.8)";
   return "rgba(50,150,255,0.6)";
 }
 
-// 📡 SIMU fréquences
+// 📡 SIMULATION FRÉQUENCES (wifi/bluetooth/radio)
 function freqEffect(t){
   return Math.sin(t*10)*0.5 + Math.sin(t*25)*0.3;
 }
 
-// 🎨 DRAW
+// 🎨 RENDER
 function draw(){
 
   ctx.fillStyle = "rgba(0,0,0,0.08)";
   ctx.fillRect(0,0,canvas.width,canvas.height);
 
   strength = Math.sqrt(field.x**2 + field.y**2 + field.z**2);
-
   let angle = Math.atan2(field.y, field.x);
-
   let t = Date.now()*0.001;
-
   let freq = freqEffect(t);
 
   // 🎧 son
@@ -177,7 +159,6 @@ function draw(){
     let dx = p.x - canvas.width/2;
     let dy = p.y - canvas.height/2;
     let dist = Math.sqrt(dx*dx+dy*dy)+1;
-
     let force = (100/dist) + freq*2;
 
     p.vx += Math.cos(angle + freq)*force*0.02;
@@ -207,7 +188,7 @@ draw();
 
 // 🚀 START
 btn.addEventListener("click", async ()=>{
-  btn.style.display = "none";
+  btn.style.display="none";
   await audioCtx.resume();
   await startCamera();
   startMagnet();
