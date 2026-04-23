@@ -3,131 +3,168 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>EM Vision REAL</title>
+<title>EM Vision PRO</title>
 </head>
 
-<body style="margin:0; overflow:hidden; background:black;">
+<body style="margin:0; overflow:hidden; background:black; font-family:Arial">
 
-<video id="video" autoplay playsinline muted style="
-position:absolute;width:100%;height:100%;object-fit:cover;z-index:0;"></video>
+<video id="video"></video>
+<canvas id="canvas"></canvas>
 
-<canvas id="canvas" style="position:absolute;top:0;left:0;z-index:1;"></canvas>
+<button id="startBtn">DÉMARRER SCAN</button>
 
-<button id="startBtn" style="
+<div id="legend">
+🔵 Aimant détecté<br>
+🟢 Métal détecté<br>
+⚪ Champ normal
+</div>
+
+<style>
+#video{
+position:absolute;width:100%;height:100%;object-fit:cover;z-index:0;
+}
+#canvas{
+position:absolute;top:0;left:0;z-index:1;
+}
+#startBtn{
 position:absolute;z-index:2;top:50%;left:50%;
 transform:translate(-50%,-50%);
 padding:20px 40px;font-size:20px;
-background:black;color:white;border:2px solid white;border-radius:10px;">
-DÉMARRER
-</button>
+background:black;color:white;border:2px solid white;border-radius:10px;
+}
+#legend{
+position:absolute;bottom:20px;left:20px;z-index:2;
+background:rgba(0,0,0,0.5);color:white;padding:15px;border-radius:10px;
+}
+</style>
 
 <script>
-const video = document.getElementById("video");
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
-const btn = document.getElementById("startBtn");
+const video=document.getElementById("video");
+const canvas=document.getElementById("canvas");
+const ctx=canvas.getContext("2d");
+const btn=document.getElementById("startBtn");
 
-canvas.width = innerWidth;
-canvas.height = innerHeight;
+canvas.width=innerWidth;
+canvas.height=innerHeight;
 
-// 🧲 CHAMP RÉEL via BOUSSOLE
-let field = {x:0,y:0,z:0};
-let strength = 0;
+let field={x:0,y:0,z:0};
+let baseline=0;
+let calibrated=false;
+let delta=0;
 
-async function requestOrientation(){
-  if(typeof DeviceOrientationEvent.requestPermission === "function"){
-    await DeviceOrientationEvent.requestPermission();
-  }
-
-  window.addEventListener("deviceorientationabsolute", e=>{
-    field.x = e.alpha || 0;
-    field.y = e.beta || 0;
-    field.z = e.gamma || 0;
-  });
-
-  window.addEventListener("deviceorientation", e=>{
-    field.x = e.alpha || 0;
-    field.y = e.beta || 0;
-    field.z = e.gamma || 0;
-  });
-}
-
-// 📷 CAMERA (méthode brute fiable)
+// 📷 CAMERA FIX SAMSUNG
 async function startCamera(){
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video:{
-      facingMode:"environment"
-    },
-    audio:false
-  });
+try{
+video.setAttribute("autoplay",true);
+video.setAttribute("muted",true);
+video.setAttribute("playsinline",true);
 
-  video.srcObject = stream;
-  video.play();
+const stream=await navigator.mediaDevices.getUserMedia({
+video:{
+facingMode:{exact:"environment"}
+},
+audio:false
+});
+
+video.srcObject=stream;
+await video.play();
+}catch(e){
+alert("Erreur caméra : "+e);
+}
 }
 
-// 🎧 AUDIO
-const audioCtx = new (window.AudioContext||window.webkitAudioContext)();
-const osc = audioCtx.createOscillator();
-const gain = audioCtx.createGain();
-osc.connect(gain);
-gain.connect(audioCtx.destination);
-osc.start();
-gain.gain.value = 0;
+// 🧭 CAPTEUR MAGNETIQUE REEL
+async function startSensors(){
+
+if(typeof DeviceOrientationEvent.requestPermission==="function"){
+await DeviceOrientationEvent.requestPermission();
+}
+
+window.addEventListener("deviceorientationabsolute",e=>{
+field.x=e.alpha||0;
+field.y=e.beta||0;
+field.z=e.gamma||0;
+});
+
+}
+
+// 🔊 AUDIO
+const audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+const osc=audioCtx.createOscillator();
+const gain=audioCtx.createGain();
+osc.connect(gain);gain.connect(audioCtx.destination);
+osc.start();gain.gain.value=0;
 
 // ✨ PARTICULES
 let particles=[];
-for(let i=0;i<1200;i++){
- particles.push({x:Math.random()*canvas.width,y:Math.random()*canvas.height,vx:0,vy:0});
+for(let i=0;i<900;i++){
+particles.push({x:Math.random()*canvas.width,y:Math.random()*canvas.height,vx:0,vy:0});
 }
 
-// 🎨 COULEUR MÉTAL / AIMANT
-function getColor(strength){
-  if(strength>40) return "rgba(255,50,50,0.9)"; // aimant/métal proche
-  if(strength>20) return "rgba(50,255,100,0.8)";
-  return "rgba(50,150,255,0.6)";
+// 🎨 DETECTION AIMANT / METAL
+function detectField(){
+let strength=Math.sqrt(field.x**2+field.y**2+field.z**2);
+
+if(!calibrated){
+baseline=baseline*0.98+strength*0.02;
+if(Date.now()>startTime+3000) calibrated=true;
+}
+
+delta=Math.abs(strength-baseline);
+
+// classification
+if(delta>25) return "magnet";
+if(delta>8) return "metal";
+return "none";
+}
+
+function getColor(type){
+if(type==="magnet") return "rgba(0,150,255,0.9)";
+if(type==="metal") return "rgba(0,255,120,0.9)";
+return "rgba(255,255,255,0.4)";
 }
 
 // 🎨 RENDER
+let startTime=Date.now();
 function draw(){
- ctx.fillStyle="rgba(0,0,0,0.1)";
- ctx.fillRect(0,0,canvas.width,canvas.height);
+ctx.fillStyle="rgba(0,0,0,0.15)";
+ctx.fillRect(0,0,canvas.width,canvas.height);
 
- strength = Math.sqrt(field.x*field.x + field.y*field.y + field.z*field.z);
- let angle = field.x * 0.05;
+let type=detectField();
+let color=getColor(type);
 
- gain.gain.value = Math.min(0.5,strength/50);
- osc.frequency.value = 150 + strength*5;
+// son
+gain.gain.value=Math.min(0.5,delta/40);
+osc.frequency.value=150+delta*20;
 
- particles.forEach(p=>{
-   let force = 0.3 + strength*0.02;
-   p.vx += Math.cos(angle)*force;
-   p.vy += Math.sin(angle)*force;
-   p.x += p.vx; p.y += p.vy;
-   p.vx*=0.95; p.vy*=0.95;
+particles.forEach(p=>{
+let force=0.2+delta*0.05;
+p.vx+=(Math.random()-0.5)*force;
+p.vy+=(Math.random()-0.5)*force;
+p.x+=p.vx;p.y+=p.vy;
+p.vx*=0.95;p.vy*=0.95;
 
-   if(p.x<0||p.x>canvas.width||p.y<0||p.y>canvas.height){
-     p.x=Math.random()*canvas.width;
-     p.y=Math.random()*canvas.height;
-   }
+if(p.x<0||p.x>canvas.width||p.y<0||p.y>canvas.height){
+p.x=Math.random()*canvas.width;
+p.y=Math.random()*canvas.height;
+}
 
-   ctx.fillStyle=getColor(strength);
-   ctx.beginPath();
-   ctx.arc(p.x,p.y,1.5,0,Math.PI*2);
-   ctx.fill();
- });
+ctx.fillStyle=color;
+ctx.beginPath();
+ctx.arc(p.x,p.y,1.5,0,Math.PI*2);
+ctx.fill();
+});
 
- requestAnimationFrame(draw);
+requestAnimationFrame(draw);
 }
 draw();
 
-// 🚀 START ordre critique mobile
-btn.onclick = async ()=>{
-  btn.style.display="none";
-
-  await requestOrientation(); // 🧲 permission capteurs
-  await audioCtx.resume();    // 🔊 permission audio
-  await startCamera();        // 📷 caméra
-
+// 🚀 START GLOBAL
+btn.onclick=async()=>{
+btn.style.display="none";
+await startSensors();
+await audioCtx.resume();
+await startCamera();
 };
 </script>
 </body>
