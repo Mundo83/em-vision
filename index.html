@@ -1,16 +1,19 @@
 <!DOCTYPE html>
-<html>
-<body style="margin:0; overflow:hidden;">
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Magnetic Vision</title>
+</head>
 
-<video id="video" autoplay playsinline style="
+<body style="margin:0; overflow:hidden; background:black;">
+
+<video id="video" autoplay playsinline muted style="
 position:absolute;
-top:0;
-left:0;
 width:100%;
 height:100%;
 object-fit:cover;
 z-index:0;
-background:black;
 "></video>
 
 <canvas id="canvas" style="
@@ -21,101 +24,125 @@ z-index:1;
 "></canvas>
 
 <script>
-let video = document.getElementById("video");
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
 
-video.style.opacity = 1;
-
-let canvas = document.getElementById("canvas");
-let ctx = canvas.getContext("2d");
-
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
-
-window.onresize = () => {
+// resize
+function resize(){
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
-};
+}
+resize();
+window.addEventListener("resize", resize);
 
-// caméra
-navigator.mediaDevices.getUserMedia({ video: true })
-.then(stream => {
-  console.log("CAMERA OK");
-  video.srcObject = stream;
-  video.play();
-})
-.catch(err => {
-  console.error("ERREUR CAMERA :", err);
-  alert("Erreur caméra : " + err.message);
-});
+// 🎥 CAMERA FIX
+async function startCamera(){
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment" },
+      audio: false
+    });
 
-// audio
-let audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-let osc = audioCtx.createOscillator();
-let gain = audioCtx.createGain();
+    video.srcObject = stream;
+
+    // 🔥 IMPORTANT (corrige ton bug)
+    await video.play();
+
+  } catch(err){
+    console.error(err);
+    alert("Erreur caméra : HTTPS obligatoire ou permission refusée");
+  }
+}
+
+// 📱 CAPTEUR MAGNÉTIQUE (si dispo)
+let field = {x:0,y:0,z:0};
+
+function startMagnetometer(){
+
+  if ("Magnetometer" in window) {
+    try {
+      const sensor = new Magnetometer({frequency: 30});
+
+      sensor.addEventListener("reading", () => {
+        field.x = sensor.x;
+        field.y = sensor.y;
+        field.z = sensor.z;
+      });
+
+      sensor.start();
+      console.log("Magnetometer actif");
+
+    } catch(err){
+      console.log("Capteur bloqué:", err);
+      startFakeField();
+    }
+
+  } else {
+    console.log("Pas de capteur → simulation");
+    startFakeField();
+  }
+}
+
+// 🧲 fallback simulation
+function startFakeField(){
+  setInterval(()=>{
+    let t = Date.now()*0.001;
+    field.x = Math.sin(t);
+    field.y = Math.cos(t);
+    field.z = Math.sin(t*0.5);
+  },50);
+}
+
+// 🎧 AUDIO
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+const osc = audioCtx.createOscillator();
+const gain = audioCtx.createGain();
 
 osc.connect(gain);
 gain.connect(audioCtx.destination);
 osc.start();
 
-// champ simulé
-let smooth = {x:0,y:0,z:0};
+document.body.addEventListener("click", async ()=>{
+  await audioCtx.resume();
+  startCamera();
+  startMagnetometer();
+});
 
-function updateField(){
-  let t = Date.now()/500;
-  let x = Math.sin(t);
-  let y = Math.cos(t);
-  let z = Math.sin(t*0.5);
-
-  smooth.x = smooth.x*0.9 + x*0.1;
-  smooth.y = smooth.y*0.9 + y*0.1;
-  smooth.z = smooth.z*0.9 + z*0.1;
-}
-setInterval(updateField,50);
-
-// particules
+// ✨ particules
 let particles = [];
-for (let i=0;i<800;i++){
+
+for(let i=0;i<1000;i++){
   particles.push({
-    x: Math.random()*canvas.width,
-    y: Math.random()*canvas.height,
-    vx:0, vy:0
+    x: Math.random()*window.innerWidth,
+    y: Math.random()*window.innerHeight,
+    vx:0,
+    vy:0
   });
 }
 
+// 🎨 rendu
 function draw(){
+
   ctx.fillStyle = "rgba(0,0,0,0.1)";
   ctx.fillRect(0,0,canvas.width,canvas.height);
 
-  let strength = Math.sqrt(smooth.x**2 + smooth.y**2 + smooth.z**2);
-  let angle = Math.atan2(smooth.y, smooth.x);
+  let strength = Math.sqrt(field.x**2 + field.y**2 + field.z**2);
+  let angle = Math.atan2(field.y, field.x);
 
-  // son
-  gain.gain.value = Math.min(0.3,strength);
-  osc.frequency.value = 100 + strength*500;
+  gain.gain.value = Math.min(0.3, strength/50);
+  osc.frequency.value = 100 + strength*10;
 
-  // centre lumineux
-  let grad = ctx.createRadialGradient(
-    canvas.width/2, canvas.height/2, 0,
-    canvas.width/2, canvas.height/2, 200
-  );
-  grad.addColorStop(0, "rgba(0,255,150,0.6)");
-  grad.addColorStop(1, "rgba(0,255,150,0)");
-
-  ctx.fillStyle = grad;
-  ctx.beginPath();
-  ctx.arc(canvas.width/2, canvas.height/2, 100 + strength*100, 0, Math.PI*2);
-  ctx.fill();
-
-  // particules
   particles.forEach(p=>{
+
     let dx = p.x - canvas.width/2;
     let dy = p.y - canvas.height/2;
-    let dist = Math.sqrt(dx*dx+dy*dy)+0.1;
+    let dist = Math.sqrt(dx*dx+dy*dy)+1;
 
-    let force = 80/dist;
+    let force = 100 / dist;
 
-    p.vx += Math.cos(angle)*force*0.01;
-    p.vy += Math.sin(angle)*force*0.01;
+    p.vx += Math.cos(angle) * force * 0.01;
+    p.vy += Math.sin(angle) * force * 0.01;
 
     p.x += p.vx;
     p.y += p.vy;
@@ -123,27 +150,22 @@ function draw(){
     p.vx *= 0.95;
     p.vy *= 0.95;
 
-    let size = 2 + strength*3;
+    if(p.x<0||p.x>canvas.width||p.y<0||p.y>canvas.height){
+      p.x = Math.random()*canvas.width;
+      p.y = Math.random()*canvas.height;
+      p.vx=0; p.vy=0;
+    }
 
-    let g = ctx.createRadialGradient(
-      p.x,p.y,0,
-      p.x,p.y,size*3
-    );
-    g.addColorStop(0,"rgba(0,255,150,1)");
-    g.addColorStop(1,"rgba(0,255,150,0)");
+    let color = Math.min(255, strength*5);
 
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(p.x,p.y,size,0,Math.PI*2);
-    ctx.fill();
+    ctx.fillStyle = `rgba(${color},255,200,0.7)`;
+    ctx.fillRect(p.x,p.y,2,2);
   });
 
   requestAnimationFrame(draw);
 }
 
 draw();
-
-document.body.onclick=()=>audioCtx.resume();
 </script>
 
 </body>
