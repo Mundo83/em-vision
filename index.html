@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Magnet AR Hybrid</title>
+<title>Magnet Scanner AR</title>
 
 <style>
 body{margin:0;overflow:hidden;background:black;font-family:Arial}
@@ -12,8 +12,7 @@ canvas{z-index:1}
 #ui{
 position:fixed;top:10px;left:10px;z-index:2;
 background:rgba(0,0,0,.45);color:white;
-padding:10px;border-radius:12px;
-}
+padding:12px;border-radius:12px;font-size:14px}
 .blue{color:#00eaff}
 .red{color:#ff4040}
 </style>
@@ -25,10 +24,10 @@ padding:10px;border-radius:12px;
 <canvas id="c"></canvas>
 
 <div id="ui">
-<div class="blue">Champ magnétique : <span id="mag">0</span></div>
-<div class="red">Métal détecté : <span id="metal">NON</span></div>
-<div>Direction Terre : <span id="dir">0°</span></div>
-<button onclick="startSensors()">Activer capteurs</button>
+<div class="blue">Perturbation magnétique : <span id="power">0</span></div>
+<div class="red">Distance estimée : <span id="dist">--</span></div>
+<div>Cap terrestre : <span id="dir">0°</span></div>
+<button onclick="start()">ACTIVER</button>
 </div>
 
 <script>
@@ -36,113 +35,91 @@ padding:10px;border-radius:12px;
 navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}})
 .then(stream=>cam.srcObject=stream);
 
-// CANVAS
+// AUDIO spatial doux
+const ctxAudio=new (window.AudioContext||window.webkitAudioContext)();
+function spatialBeep(intensity){
+const osc=ctxAudio.createOscillator();
+const gain=ctxAudio.createGain();
+osc.type="sine";
+osc.frequency.value=300+intensity*30;
+gain.gain.value=0.03+intensity*0.02;
+osc.connect(gain);
+gain.connect(ctxAudio.destination);
+osc.start();
+setTimeout(()=>osc.stop(),120);
+}
+
+// VARIABLES
+let lastAlpha=null;
+let disturbance=0;
+let earthHeading=0;
+
+function start(){
+window.addEventListener("deviceorientationabsolute",e=>{
+let alpha=e.alpha;
+earthHeading=alpha;
+dir.innerText=Math.round(alpha)+"°";
+
+if(lastAlpha!==null){
+let diff=Math.abs(alpha-lastAlpha);
+if(diff>180) diff=360-diff;
+
+// 💥 perturbation magnétique réelle
+disturbance=diff*5;
+power.innerText=disturbance.toFixed(1);
+
+if(disturbance>5){
+spatialBeep(disturbance);
+
+// estimation distance
+let d=Math.max(1,50/disturbance);
+dist.innerText=d.toFixed(2)+" m";
+}
+}
+lastAlpha=alpha;
+});
+}
+
+// CANVAS PARTICULES + RADAR
 const canvas=c;
 const ctx=canvas.getContext("2d");
 canvas.width=innerWidth;
 canvas.height=innerHeight;
 
-// AUDIO BIP
-const audioCtx=new (window.AudioContext||window.webkitAudioContext)();
-function beep(freq){
-const osc=audioCtx.createOscillator();
-osc.frequency.value=freq;
-osc.connect(audioCtx.destination);
-osc.start();
-setTimeout(()=>osc.stop(),80);
-}
+let particles=[];
+for(let i=0;i<300;i++)
+particles.push({x:Math.random()*canvas.width,y:Math.random()*canvas.height});
 
-// VARIABLES
-let earthDir=0;
-let baseline=0;
-let metal=false;
-let magneticPower=0;
-
-// PERMISSIONS IOS
-async function startSensors(){
-if(typeof DeviceMotionEvent.requestPermission==="function"){
-await DeviceMotionEvent.requestPermission();
-await DeviceOrientationEvent.requestPermission();
-}
-initSensors();
-}
-
-function initSensors(){
-
-// BOUSSOLE → direction champ terrestre 🌍
-window.addEventListener("deviceorientationabsolute",e=>{
-earthDir=e.alpha||0;
-dir.innerText=Math.round(earthDir)+"°";
-});
-
-// ACCELEROMETRE → détecteur métal 🧲
-window.addEventListener("devicemotion",e=>{
-let a=e.accelerationIncludingGravity;
-let total=Math.sqrt(a.x*a.x+a.y*a.y+a.z*a.z);
-
-if(!baseline) baseline=total;
-
-magneticPower=Math.abs(total-baseline)*50;
-mag.innerText=magneticPower.toFixed(1);
-
-if(magneticPower>15){
-if(!metal) beep(800);
-metal=true;
-metalTxt.innerText="OUI";
-}else{
-metal=false;
-metalTxt.innerText="NON";
-}
-});
-}
-
-const metalTxt=document.getElementById("metal");
-
-// PARTICULES
-let parts=[];
-for(let i=0;i<250;i++){
-parts.push({x:Math.random()*canvas.width,y:Math.random()*canvas.height});
-}
-
-// DRAW LOOP
 function draw(){
 ctx.clearRect(0,0,canvas.width,canvas.height);
 
-// 🌍 DIRECTION CHAMP TERRESTRE (fond bleu)
-let ang=(earthDir-90)*Math.PI/180;
-ctx.strokeStyle="rgba(0,200,255,0.6)";
-ctx.lineWidth=4;
+// radar
+ctx.strokeStyle="rgba(0,255,255,.4)";
+for(let r=100;r<400;r+=100){
+ctx.beginPath();
+ctx.arc(canvas.width/2,canvas.height/2,r,0,Math.PI*2);
+ctx.stroke();
+}
+
+// direction champ terrestre
+let ang=(earthHeading-90)*Math.PI/180;
+ctx.strokeStyle="cyan";
 ctx.beginPath();
 ctx.moveTo(canvas.width/2,canvas.height/2);
-ctx.lineTo(
-canvas.width/2+Math.cos(ang)*500,
-canvas.height/2+Math.sin(ang)*500
-);
+ctx.lineTo(canvas.width/2+Math.cos(ang)*400,canvas.height/2+Math.sin(ang)*400);
 ctx.stroke();
 
-// 🔵 PARTICULES CHAMP MAGNETIQUE
-parts.forEach(p=>{
-p.x+=Math.cos(ang)*(magneticPower*0.05);
-p.y+=Math.sin(ang)*(magneticPower*0.05);
-
+// particules influencées
+particles.forEach(p=>{
+p.x+=Math.cos(ang)*(disturbance*0.05);
+p.y+=Math.sin(ang)*(disturbance*0.05);
 ctx.fillStyle="rgba(0,255,255,.8)";
-ctx.beginPath();
-ctx.arc(p.x,p.y,2,0,Math.PI*2);
-ctx.fill();
+ctx.fillRect(p.x,p.y,2,2);
 });
-
-// 🔴 ALERTE METAL
-if(metal){
-ctx.fillStyle="rgba(255,0,0,.25)";
-ctx.beginPath();
-ctx.arc(canvas.width/2,canvas.height/2,250,0,Math.PI*2);
-ctx.fill();
-}
 
 requestAnimationFrame(draw);
 }
 draw();
 </script>
-
 </body>
 </html>
