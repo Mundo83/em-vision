@@ -4,145 +4,164 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>EM Vision PRO</title>
-</head>
-
-<body style="margin:0;overflow:hidden;background:black;font-family:Arial">
-
-<video id="video"></video>
-<canvas id="canvas"></canvas>
-<button id="startBtn">DÉMARRER SCAN</button>
-
 <style>
+body{margin:0;overflow:hidden;background:black;font-family:Arial;color:white}
 #video{position:absolute;width:100%;height:100%;object-fit:cover;z-index:0}
 #canvas{position:absolute;top:0;left:0;z-index:1}
+#ui{
+position:absolute;bottom:20px;left:50%;
+transform:translateX(-50%);
+z-index:2;text-align:center;
+}
+#radar{
+width:150px;height:150px;border:2px solid white;
+border-radius:50%;margin:auto;position:relative;
+}
+#needle{
+width:2px;height:70px;background:white;
+position:absolute;left:50%;bottom:50%;
+transform-origin:bottom center;
+}
+#status{margin-top:10px;font-size:18px}
 #startBtn{
-position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
-padding:20px 40px;font-size:20px;background:black;color:white;
-border:2px solid white;border-radius:10px;z-index:2}
+position:absolute;z-index:3;top:50%;left:50%;
+transform:translate(-50%,-50%);
+padding:20px 40px;font-size:20px;
+background:black;color:white;border:2px solid white;border-radius:10px;
+}
 </style>
+</head>
+<body>
+
+<video id="video" autoplay playsinline muted></video>
+<canvas id="canvas"></canvas>
+
+<button id="startBtn">DÉMARRER SCAN</button>
+
+<div id="ui">
+<div id="radar"><div id="needle"></div></div>
+<div id="status">Calibration...</div>
+</div>
 
 <script>
 const video=document.getElementById("video");
 const canvas=document.getElementById("canvas");
 const ctx=canvas.getContext("2d");
 const btn=document.getElementById("startBtn");
-canvas.width=innerWidth; canvas.height=innerHeight;
+const needle=document.getElementById("needle");
+const statusText=document.getElementById("status");
 
-//================ CAMERA SAMSUNG FIX ULTIME ================
+canvas.width=innerWidth;
+canvas.height=innerHeight;
+
+let mag={x:0,y:0,z:0};
+let baseline=0;
+let calibrated=false;
+let lastStrength=0;
+let variation=0;
+
+// CAMERA FIX SAMSUNG
 async function startCamera(){
- try{
-   // 1️⃣ ouvrir n'importe quelle caméra
-   let temp=await navigator.mediaDevices.getUserMedia({video:true});
-   temp.getTracks().forEach(t=>t.stop());
-
-   // 2️⃣ récupérer la liste
-   let devices=await navigator.mediaDevices.enumerateDevices();
-   let back=devices.find(d=>d.kind==="videoinput" && d.label.toLowerCase().includes("back"));
-
-   // 3️⃣ ouvrir caméra arrière réelle
-   const stream=await navigator.mediaDevices.getUserMedia({
-     video: back ? {deviceId:{exact:back.deviceId}} : {facingMode:"environment"}
-   });
-
-   video.srcObject=stream;
-   video.setAttribute("playsinline",true);
-   video.muted=true;
-   await video.play();
- }catch(e){alert("Erreur caméra : "+e)}
+try{
+const stream=await navigator.mediaDevices.getUserMedia({
+video:{facingMode:{ideal:"environment"}},
+audio:false
+});
+video.srcObject=stream;
+await video.play();
+}catch(e){
+statusText.innerText="Caméra non disponible";
+}
 }
 
-//================ CAPTEUR MAGNETIQUE FILTRÉ ================
-let raw=0, filtered=0, delta=0, direction=0;
-let history=[];
-
+// MAGNETIC SENSOR
+async function startSensor(){
+if(typeof DeviceOrientationEvent.requestPermission==="function"){
+await DeviceOrientationEvent.requestPermission();
+}
 window.addEventListener("deviceorientationabsolute",e=>{
-  let strength=Math.sqrt(e.alpha**2+e.beta**2+e.gamma**2);
-  raw=strength;
-
-  // filtre anti rotation terrestre (low pass)
-  filtered = filtered*0.97 + raw*0.03;
-  delta = Math.abs(raw - filtered);
-
-  direction = e.alpha * Math.PI/180;
+mag.x=e.alpha||0;
+mag.y=e.beta||0;
+mag.z=e.gamma||0;
 });
+}
 
-//================ AUDIO DOUX (SONAR) ================
-const audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+// AUDIO DOUX
+const audioCtx=new(window.AudioContext||window.webkitAudioContext)();
 const osc=audioCtx.createOscillator();
 const gain=audioCtx.createGain();
+const filter=audioCtx.createBiquadFilter();
+
 osc.type="sine";
-osc.connect(gain);gain.connect(audioCtx.destination);
-osc.start();gain.gain.value=0;
+filter.type="lowpass";
+filter.frequency.value=500;
 
-//================ PARTICULES DIRECTIONNELLES ================
+osc.connect(filter);
+filter.connect(gain);
+gain.connect(audioCtx.destination);
+osc.start();
+gain.gain.value=0;
+
+// PARTICULES
 let particles=[];
-for(let i=0;i<700;i++){
- particles.push({x:Math.random()*canvas.width,y:Math.random()*canvas.height});
+for(let i=0;i<600;i++){
+particles.push({x:Math.random()*canvas.width,y:Math.random()*canvas.height});
 }
 
-function drawRadar(){
- let cx=canvas.width/2, cy=canvas.height/2;
- ctx.strokeStyle="rgba(0,255,0,0.3)";
- ctx.beginPath(); ctx.arc(cx,cy,120,0,Math.PI*2); ctx.stroke();
- ctx.beginPath(); ctx.arc(cx,cy,200,0,Math.PI*2); ctx.stroke();
-
- // aiguille direction champ
- ctx.strokeStyle="lime";
- ctx.lineWidth=3;
- ctx.beginPath();
- ctx.moveTo(cx,cy);
- ctx.lineTo(cx+Math.cos(direction)*200, cy+Math.sin(direction)*200);
- ctx.stroke();
-}
-
-function detectType(){
- if(delta>18) return "magnet";
- if(delta>6) return "metal";
- return "none";
-}
-
-function getColor(type){
- if(type==="magnet") return "#00aaff";
- if(type==="metal") return "#00ff88";
- return "#ffffff22";
-}
-
-//================ RENDER ================
 function draw(){
- ctx.fillStyle="rgba(0,0,0,0.2)";
- ctx.fillRect(0,0,canvas.width,canvas.height);
+ctx.fillStyle="rgba(0,0,0,0.2)";
+ctx.fillRect(0,0,canvas.width,canvas.height);
 
- let type=detectType();
- let color=getColor(type);
+let strength=Math.sqrt(mag.x**2+mag.y**2+mag.z**2);
 
- // son radar doux
- gain.gain.value = Math.min(0.3, delta/40);
- osc.frequency.value = 200 + delta*8;
-
- // particules suivent direction champ
- particles.forEach(p=>{
-   p.x += Math.cos(direction)*delta*0.3 + (Math.random()-0.5)*1;
-   p.y += Math.sin(direction)*delta*0.3 + (Math.random()-0.5)*1;
-
-   if(p.x<0||p.x>canvas.width||p.y<0||p.y>canvas.height){
-     p.x=Math.random()*canvas.width;
-     p.y=Math.random()*canvas.height;
-   }
-
-   ctx.fillStyle=color;
-   ctx.fillRect(p.x,p.y,2,2);
- });
-
- drawRadar();
- requestAnimationFrame(draw);
+if(!calibrated){
+baseline=baseline*0.98+strength*0.02;
+if(Date.now()>startTime+3000){
+calibrated=true;
+statusText.innerText="Scan actif";
 }
+}
+
+variation=Math.abs(strength-lastStrength);
+lastStrength=strength;
+
+// détection réelle
+let detected=false;
+if(variation>15){detected=true;}
+
+let angle=Math.atan2(mag.y,mag.x);
+needle.style.transform="rotate("+angle+"rad)";
+
+// son doux progressif
+gain.gain.value=Math.min(0.3,variation/50);
+osc.frequency.value=120+variation*5;
+
+// particules directionnelles
+particles.forEach(p=>{
+p.x+=Math.cos(angle)*(detected?3:0.5);
+p.y+=Math.sin(angle)*(detected?3:0.5);
+
+if(p.x<0||p.x>canvas.width||p.y<0||p.y>canvas.height){
+p.x=Math.random()*canvas.width;
+p.y=Math.random()*canvas.height;
+}
+
+ctx.fillStyle=detected?"rgba(0,150,255,0.9)":"rgba(255,255,255,0.3)";
+ctx.beginPath();
+ctx.arc(p.x,p.y,1.5,0,Math.PI*2);
+ctx.fill();
+});
+
+requestAnimationFrame(draw);
+}
+let startTime=Date.now();
 draw();
 
-//================ START GLOBAL ================
 btn.onclick=async()=>{
- btn.style.display="none";
- await audioCtx.resume();
- await startCamera();
+btn.style.display="none";
+await startSensor();
+await audioCtx.resume();
+await startCamera();
 };
 </script>
 </body>
