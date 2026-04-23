@@ -3,178 +3,145 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Magnet AR</title>
+<title>Magnet AR Hybrid</title>
 
 <style>
-body{
-  margin:0;
-  overflow:hidden;
-  background:black;
-  font-family:Arial,Helvetica,sans-serif;
-}
-
-video{
-  position:fixed;
-  width:100vw;
-  height:100vh;
-  object-fit:cover;
-  z-index:0;
-}
-
-canvas{
-  position:fixed;
-  width:100vw;
-  height:100vh;
-  z-index:1;
-}
-
+body{margin:0;overflow:hidden;background:black;font-family:Arial}
+video,canvas{position:fixed;width:100vw;height:100vh;object-fit:cover}
+canvas{z-index:1}
 #ui{
-  position:fixed;
-  top:10px;
-  left:10px;
-  color:#00ffea;
-  z-index:2;
-  background:rgba(0,0,0,.45);
-  padding:10px;
-  border-radius:10px;
-  backdrop-filter: blur(6px);
+position:fixed;top:10px;left:10px;z-index:2;
+background:rgba(0,0,0,.45);color:white;
+padding:10px;border-radius:12px;
 }
-
-.big{
-  font-size:22px;
-  font-weight:bold;
-}
-
-.small{
-  font-size:12px;
-  opacity:.8;
-}
+.blue{color:#00eaff}
+.red{color:#ff4040}
 </style>
 </head>
 
 <body>
 
 <video id="cam" autoplay playsinline></video>
-<canvas id="canvas"></canvas>
+<canvas id="c"></canvas>
 
 <div id="ui">
-  <div class="big">Champ magnétique : <span id="power">0</span> µT</div>
-  <div>X : <span id="x">0</span></div>
-  <div>Y : <span id="y">0</span></div>
-  <div>Z : <span id="z">0</span></div>
-  <div class="small">
-  Z = derrière / écran<br>
-  X = gauche / droite<br>
-  Y = haut / bas
-  </div>
+<div class="blue">Champ magnétique : <span id="mag">0</span></div>
+<div class="red">Métal détecté : <span id="metal">NON</span></div>
+<div>Direction Terre : <span id="dir">0°</span></div>
+<button onclick="startSensors()">Activer capteurs</button>
 </div>
 
 <script>
 // CAMERA
-navigator.mediaDevices.getUserMedia({
-  video:{ facingMode:"environment" }
-}).then(stream=>{
-  document.getElementById("cam").srcObject=stream;
-});
+navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}})
+.then(stream=>cam.srcObject=stream);
 
 // CANVAS
-const canvas=document.getElementById("canvas");
+const canvas=c;
 const ctx=canvas.getContext("2d");
 canvas.width=innerWidth;
 canvas.height=innerHeight;
 
-let particles=[];
-for(let i=0;i<200;i++){
-  particles.push({
-    x:Math.random()*canvas.width,
-    y:Math.random()*canvas.height,
-    vx:0,
-    vy:0
-  });
+// AUDIO BIP
+const audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+function beep(freq){
+const osc=audioCtx.createOscillator();
+osc.frequency.value=freq;
+osc.connect(audioCtx.destination);
+osc.start();
+setTimeout(()=>osc.stop(),80);
 }
 
-let mag={x:0,y:0,z:0,strength:0};
+// VARIABLES
+let earthDir=0;
+let baseline=0;
+let metal=false;
+let magneticPower=0;
 
-// MAGNETOMETER
-if("Magnetometer" in window){
-  const sensor=new Magnetometer({frequency:30});
-  sensor.addEventListener("reading", ()=>{
-    mag.x=sensor.x;
-    mag.y=sensor.y;
-    mag.z=sensor.z;
-    mag.strength=Math.sqrt(mag.x**2+mag.y**2+mag.z**2);
-    updateUI();
-  });
-  sensor.start();
+// PERMISSIONS IOS
+async function startSensors(){
+if(typeof DeviceMotionEvent.requestPermission==="function"){
+await DeviceMotionEvent.requestPermission();
+await DeviceOrientationEvent.requestPermission();
+}
+initSensors();
+}
+
+function initSensors(){
+
+// BOUSSOLE → direction champ terrestre 🌍
+window.addEventListener("deviceorientationabsolute",e=>{
+earthDir=e.alpha||0;
+dir.innerText=Math.round(earthDir)+"°";
+});
+
+// ACCELEROMETRE → détecteur métal 🧲
+window.addEventListener("devicemotion",e=>{
+let a=e.accelerationIncludingGravity;
+let total=Math.sqrt(a.x*a.x+a.y*a.y+a.z*a.z);
+
+if(!baseline) baseline=total;
+
+magneticPower=Math.abs(total-baseline)*50;
+mag.innerText=magneticPower.toFixed(1);
+
+if(magneticPower>15){
+if(!metal) beep(800);
+metal=true;
+metalTxt.innerText="OUI";
 }else{
-  alert("Magnétomètre non supporté 😢 (Android Chrome conseillé)");
+metal=false;
+metalTxt.innerText="NON";
+}
+});
 }
 
-function updateUI(){
-  power.innerText=mag.strength.toFixed(1);
-  x.innerText=mag.x.toFixed(1);
-  y.innerText=mag.y.toFixed(1);
-  z.innerText=mag.z.toFixed(1);
+const metalTxt=document.getElementById("metal");
+
+// PARTICULES
+let parts=[];
+for(let i=0;i<250;i++){
+parts.push({x:Math.random()*canvas.width,y:Math.random()*canvas.height});
 }
 
-// DRAW RADAR
-function drawRadar(){
-  const cx=canvas.width/2;
-  const cy=canvas.height/2;
+// DRAW LOOP
+function draw(){
+ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  ctx.strokeStyle="rgba(0,255,200,.3)";
-  ctx.lineWidth=2;
+// 🌍 DIRECTION CHAMP TERRESTRE (fond bleu)
+let ang=(earthDir-90)*Math.PI/180;
+ctx.strokeStyle="rgba(0,200,255,0.6)";
+ctx.lineWidth=4;
+ctx.beginPath();
+ctx.moveTo(canvas.width/2,canvas.height/2);
+ctx.lineTo(
+canvas.width/2+Math.cos(ang)*500,
+canvas.height/2+Math.sin(ang)*500
+);
+ctx.stroke();
 
-  for(let r=100;r<500;r+=100){
-    ctx.beginPath();
-    ctx.arc(cx,cy,r,0,Math.PI*2);
-    ctx.stroke();
-  }
+// 🔵 PARTICULES CHAMP MAGNETIQUE
+parts.forEach(p=>{
+p.x+=Math.cos(ang)*(magneticPower*0.05);
+p.y+=Math.sin(ang)*(magneticPower*0.05);
 
-  // direction aimant (projection X/Y)
-  const angle=Math.atan2(mag.y,mag.x);
-  ctx.strokeStyle="rgba(0,255,255,.8)";
-  ctx.beginPath();
-  ctx.moveTo(cx,cy);
-  ctx.lineTo(cx+Math.cos(angle)*400, cy+Math.sin(angle)*400);
-  ctx.stroke();
+ctx.fillStyle="rgba(0,255,255,.8)";
+ctx.beginPath();
+ctx.arc(p.x,p.y,2,0,Math.PI*2);
+ctx.fill();
+});
+
+// 🔴 ALERTE METAL
+if(metal){
+ctx.fillStyle="rgba(255,0,0,.25)";
+ctx.beginPath();
+ctx.arc(canvas.width/2,canvas.height/2,250,0,Math.PI*2);
+ctx.fill();
 }
 
-// PARTICLES
-function updateParticles(){
-  const force = Math.min(mag.strength/80, 5);
-
-  particles.forEach(p=>{
-    const angle=Math.atan2(mag.y,mag.x);
-
-    p.vx += Math.cos(angle)*force*0.2;
-    p.vy += Math.sin(angle)*force*0.2;
-
-    p.vx*=0.95;
-    p.vy*=0.95;
-
-    p.x+=p.vx;
-    p.y+=p.vy;
-
-    if(p.x<0||p.x>canvas.width) p.vx*=-1;
-    if(p.y<0||p.y>canvas.height) p.vy*=-1;
-
-    const glow=Math.min(mag.strength*3,255);
-    ctx.fillStyle=`rgba(0,255,${glow},0.9)`;
-    ctx.beginPath();
-    ctx.arc(p.x,p.y,2,0,Math.PI*2);
-    ctx.fill();
-  });
+requestAnimationFrame(draw);
 }
-
-// LOOP
-function loop(){
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  drawRadar();
-  updateParticles();
-  requestAnimationFrame(loop);
-}
-loop();
+draw();
 </script>
 
 </body>
