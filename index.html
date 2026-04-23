@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html>
+<body style="margin:0; overflow:hidden;">
+
+<video id="video" autoplay playsinline style="
+position:absolute;
+top:0;
+left:0;
+width:100%;
+height:100%;
+object-fit:cover;
+z-index:0;
+background:black;
+"></video>
+
+<canvas id="canvas" style="
+position:absolute;
+top:0;
+left:0;
+z-index:1;
+"></canvas>
+
+<script>
+let video = document.getElementById("video");
+
+video.style.opacity = 1;
+
+let canvas = document.getElementById("canvas");
+let ctx = canvas.getContext("2d");
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+window.onresize = () => {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+};
+
+// caméra
+navigator.mediaDevices.getUserMedia({ video: true })
+.then(stream => {
+  console.log("CAMERA OK");
+  video.srcObject = stream;
+  video.play();
+})
+.catch(err => {
+  console.error("ERREUR CAMERA :", err);
+  alert("Erreur caméra : " + err.message);
+});
+
+// audio
+let audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+let osc = audioCtx.createOscillator();
+let gain = audioCtx.createGain();
+
+osc.connect(gain);
+gain.connect(audioCtx.destination);
+osc.start();
+
+// champ simulé
+let smooth = {x:0,y:0,z:0};
+
+function updateField(){
+  let t = Date.now()/500;
+  let x = Math.sin(t);
+  let y = Math.cos(t);
+  let z = Math.sin(t*0.5);
+
+  smooth.x = smooth.x*0.9 + x*0.1;
+  smooth.y = smooth.y*0.9 + y*0.1;
+  smooth.z = smooth.z*0.9 + z*0.1;
+}
+setInterval(updateField,50);
+
+// particules
+let particles = [];
+for (let i=0;i<800;i++){
+  particles.push({
+    x: Math.random()*canvas.width,
+    y: Math.random()*canvas.height,
+    vx:0, vy:0
+  });
+}
+
+function draw(){
+  ctx.fillStyle = "rgba(0,0,0,0.1)";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  let strength = Math.sqrt(smooth.x**2 + smooth.y**2 + smooth.z**2);
+  let angle = Math.atan2(smooth.y, smooth.x);
+
+  // son
+  gain.gain.value = Math.min(0.3,strength);
+  osc.frequency.value = 100 + strength*500;
+
+  // centre lumineux
+  let grad = ctx.createRadialGradient(
+    canvas.width/2, canvas.height/2, 0,
+    canvas.width/2, canvas.height/2, 200
+  );
+  grad.addColorStop(0, "rgba(0,255,150,0.6)");
+  grad.addColorStop(1, "rgba(0,255,150,0)");
+
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(canvas.width/2, canvas.height/2, 100 + strength*100, 0, Math.PI*2);
+  ctx.fill();
+
+  // particules
+  particles.forEach(p=>{
+    let dx = p.x - canvas.width/2;
+    let dy = p.y - canvas.height/2;
+    let dist = Math.sqrt(dx*dx+dy*dy)+0.1;
+
+    let force = 80/dist;
+
+    p.vx += Math.cos(angle)*force*0.01;
+    p.vy += Math.sin(angle)*force*0.01;
+
+    p.x += p.vx;
+    p.y += p.vy;
+
+    p.vx *= 0.95;
+    p.vy *= 0.95;
+
+    let size = 2 + strength*3;
+
+    let g = ctx.createRadialGradient(
+      p.x,p.y,0,
+      p.x,p.y,size*3
+    );
+    g.addColorStop(0,"rgba(0,255,150,1)");
+    g.addColorStop(1,"rgba(0,255,150,0)");
+
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,size,0,Math.PI*2);
+    ctx.fill();
+  });
+
+  requestAnimationFrame(draw);
+}
+
+draw();
+
+document.body.onclick=()=>audioCtx.resume();
+</script>
+
+</body>
+</html>
